@@ -98,6 +98,13 @@ a{color:var(--accent)}
 .pill{display:inline-flex;align-items:center;gap:6px;font-size:.78rem;font-weight:700;padding:2px 10px;border-radius:999px;background:var(--surface2);color:var(--muted);border:1px solid var(--line);white-space:nowrap}
 .pill.on{background:var(--ok-soft);color:var(--ok);border-color:transparent}
 .flow-label{margin:4px 0 -4px;font-size:.78rem;font-weight:700;letter-spacing:.08em;color:var(--muted)}
+.pill.tag{font-size:.7rem;padding:0 8px;vertical-align:middle;font-weight:500}
+.timeedit{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.timeedit input{flex:1 1 100%;width:auto}
+.timeedit .btn{flex:1 1 0}
+.linkrow{display:flex;flex-wrap:wrap;gap:4px 18px}
+button.log-row{width:100%;background:none;border:0;border-top:1px solid var(--line);text-align:left;font:inherit;font-size:.9rem;color:inherit;cursor:pointer}
+button.log-row:first-child{border-top:0}
 .pill.warn{background:var(--warn-soft);color:var(--warn);border-color:transparent}
 .home.due{border-color:var(--warn);border-width:2px}
 .rhead{display:flex;align-items:center;justify-content:space-between;gap:10px}
@@ -248,6 +255,15 @@ const pad = n => String(n).padStart(2, "0");
 const fmtTime = iso => { const d = new Date(iso); return d.getHours() + ":" + pad(d.getMinutes()); };
 const fmtDate = iso => { const d = new Date(iso); return (d.getMonth()+1) + "月" + d.getDate() + "日(" + "日月火水木金土"[d.getDay()] + ")"; };
 const fmtDur = (a, b) => { const m = Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000)); return (m >= 60 ? Math.floor(m/60) + "時間" : "") + (m % 60) + "分"; };
+const toHHMM = iso => { const d = new Date(iso); return pad(d.getHours()) + ":" + pad(d.getMinutes()); };
+// baseIso と同じ日の hh:mm にした日時
+function atTime(baseIso, hhmm){ const d = new Date(baseIso), [h, m] = hhmm.split(":").map(Number); d.setHours(h, m, 0, 0); return d.toISOString(); }
+function timeForm(id, value, okAct, okLabel, uiKey){
+  return '<div class="timeedit"><input type="time" id="' + id + '" value="' + value + '" aria-label="時刻">'
+    + '<button class="btn sm primary" data-act="' + okAct + '">' + okLabel + '</button>'
+    + '<button class="btn sm" data-act="ui" data-key="' + uiKey + '">やめる</button></div>';
+}
+const EDITED_TAG = '<span class="pill tag">修正</span>';
 const dayKey = iso => { const d = new Date(iso); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); };
 const fmtDay = key => { const [y, m, d] = key.split("-").map(Number); return fmtDate(new Date(y, m - 1, d).toISOString()); };
 const hm = v => String(v || "").replace(/^0(\d)/, "$1"); // "09:00" → "9:00"
@@ -371,15 +387,16 @@ function startDb(){
 }
 // 入力中の画面（編集・設定・日報）はデータ更新で描き直さない
 function softRender(){
-  if (S.view.name === "edit" || S.view.name === "settings" || S.view.name === "report") return;
+  if (S.view.name === "edit" || S.view.name === "settings" || S.view.name === "report" || S.view.name === "logEdit") return;
   render();
 }
 
 /* ---------- actions ---------- */
 function go(view){ S.view = view; S.ui = {}; render(); window.scrollTo(0, 0); }
 
-function enter(id, iso){
+function enter(id, iso, edited){
   S.visits[id] = { inAt: iso, done: {}, final: {} };
+  if (edited) S.visits[id].inEdited = true;
   write("visits/" + id, S.visits[id]); render();
 }
 function cancelEntry(id){
@@ -391,10 +408,11 @@ function toggle(id, kind, itemId){
   if (map[itemId]) delete map[itemId]; else map[itemId] = true;
   write("visits/" + id, v); render();
 }
-function exitVisit(id, outAt){
+function exitVisit(id, outAt, edited){
   const home = S.homes[id], v = S.visits[id]; if (!home || !v) return;
   const c = counts(home, v);
   const entry = { homeId: id, name: home.name, inAt: v.inAt, outAt, done: c.done, total: c.tasks };
+  if (edited || v.inEdited) entry.edited = true;
   S.log = [entry].concat(S.log).slice(0, LOG_MAX);
   write("log/recent", { entries: S.log });
   delete S.visits[id]; write("visits/" + id, null);
@@ -408,7 +426,7 @@ function render(){
   }
   const v = S.view;
   if (v.name === "visit" && !S.homes[v.id]) S.view = { name: "list" };
-  const html = { list: viewList, visit: viewVisit, edit: viewEdit, settings: viewSettings, done: viewDone, report: viewReport }[S.view.name]();
+  const html = { list: viewList, visit: viewVisit, edit: viewEdit, settings: viewSettings, done: viewDone, report: viewReport, logEdit: viewLogEdit }[S.view.name]();
   app.innerHTML = html;
   if (S.view.name === "edit") { renderEditor("tasks"); renderEditor("finals"); }
   keepAwake(S.view.name === "visit" && !!S.visits[S.view.id]);
@@ -443,9 +461,9 @@ function viewList(){
   out += '<button class="btn" data-act="new">＋ 家庭を追加</button></section>';
 
   if (S.log.length) {
-    out += '<section class="section"><h2>最近の記録</h2><div class="log">' + S.log.slice(0, 10).map(e =>
-      '<div class="log-row num"><span class="d">' + esc(fmtDate(e.inAt)) + '</span><span class="n">' + esc(e.name) + '</span>'
-      + '<span class="d">' + esc(fmtTime(e.inAt)) + '–' + esc(fmtTime(e.outAt)) + '　' + e.done + '/' + e.total + '</span></div>'
+    out += '<section class="section"><div class="section-head"><h2>最近の記録</h2><span class="small muted">押すと時刻を直せます</span></div><div class="log">' + S.log.slice(0, 10).map((e, i) =>
+      '<button class="log-row num" data-act="logEdit" data-idx="' + i + '"><span class="d">' + esc(fmtDate(e.inAt)) + '</span><span class="n">' + esc(e.name) + (e.edited ? " " + EDITED_TAG : "") + '</span>'
+      + '<span class="d">' + esc(fmtTime(e.inAt)) + '–' + esc(fmtTime(e.outAt)) + '　' + e.done + '/' + e.total + '</span></button>'
     ).join("") + '</div></section>';
   }
   return out;
@@ -556,16 +574,22 @@ function viewVisit(){
   if (!v) {
     out += '<p class="small muted">到着したら押してください。入室時刻を記録し、LINEが開きます。</p>' + LINE_HOWTO
       + '<a class="btn big primary" data-act="enter" href="' + esc(lineUrl(message("in", h, new Date().toISOString()))) + '" target="_blank" rel="noopener">入室する（LINEを開く）</a>';
+    out += S.ui.enterAt
+      ? timeForm("v-enter", toHHMM(new Date().toISOString()), "enterAt", "この時刻で記録", "enterAt")
+        + '<p class="small muted">LINEは開きません。記録したあと「入室連絡を開く」から送れます。</p>'
+      : '<p><button class="linkbtn small" data-act="ui" data-key="enterAt" data-on="1">押し忘れたとき：時刻を指定して入室を記録する</button></p>';
   } else {
     const txt = message("in", h, v.inAt);
-    out += '<p class="okline num">✓ ' + esc(fmtTime(v.inAt)) + ' 入室済み</p>'
-      + '<div class="btnrow"><a class="btn sm" href="' + esc(lineUrl(txt)) + '" target="_blank" rel="noopener">入室連絡をもう一度開く</a>'
+    out += '<p class="okline num">✓ ' + esc(fmtTime(v.inAt)) + ' 入室済み' + (v.inEdited ? " " + EDITED_TAG : "") + '</p>'
+      + (S.ui.editIn ? timeForm("v-in", toHHMM(v.inAt), "editIn", "時刻を保存", "editIn") : "")
+      + '<div class="btnrow"><a class="btn sm" href="' + esc(lineUrl(txt)) + '" target="_blank" rel="noopener">入室連絡を開く</a>'
       + '<button class="btn sm" data-act="copy" data-text="' + esc(txt) + '">文面をコピー</button></div>';
     if (S.ui.confirmCancel) {
       out += '<div class="alert danger"><p>入室の記録とチェックをすべて消します。LINEに送ったメッセージは消えません。</p>'
         + '<div class="btnrow"><button class="btn sm danger" data-act="cancelIn">取り消す</button><button class="btn sm" data-act="ui" data-key="confirmCancel">やめる</button></div></div>';
     } else {
-      out += '<p><button class="linkbtn small" data-act="ui" data-key="confirmCancel" data-on="1">入室を取り消す</button></p>';
+      out += '<p class="linkrow">' + (S.ui.editIn ? "" : '<button class="linkbtn small" data-act="ui" data-key="editIn" data-on="1">入室時刻を直す</button>')
+        + '<button class="linkbtn small" data-act="ui" data-key="confirmCancel" data-on="1">入室を取り消す</button></p>';
     }
   }
   out += '</section>';
@@ -602,7 +626,27 @@ function viewVisit(){
   } else {
     out += '<p class="small muted">退出時刻を記録し、LINEが開きます。</p>' + LINE_HOWTO + outBtn("退出する（LINEを開く）");
   }
+  if (v && c.fin >= c.finals) {
+    out += S.ui.exitAt
+      ? timeForm("v-exit", toHHMM(new Date().toISOString()), "exitAt", "この時刻で退出", "exitAt")
+        + '<p class="small muted">LINEは開きません。退出後の画面から退出連絡を送れます。</p>'
+      : '<p><button class="linkbtn small" data-act="ui" data-key="exitAt" data-on="1">押し忘れたとき：時刻を指定して退出する</button></p>';
+  }
   out += '</section>';
+  return out;
+}
+
+function viewLogEdit(){
+  const e = S.log[S.view.idx];
+  if (!e) return '<p class="notice">記録が見つかりません。</p><button class="btn" data-act="back">一覧へ戻る</button>';
+  let out = '<div class="bar"><div class="bar-top"><button class="navbtn" data-act="back">‹ 一覧</button><span class="t">記録を直す</span><span class="navbtn" aria-hidden="true" style="visibility:hidden">‹ 一覧</span></div></div>';
+  out += '<div class="card"><p class="eyebrow num">' + esc(fmtDate(e.inAt)) + '</p><h2>' + esc(e.name) + (e.edited ? " " + EDITED_TAG : "") + '</h2>'
+    + '<div class="field"><span class="lbl">入室〜退出</span><div class="time2"><input type="time" id="l-in" value="' + toHHMM(e.inAt) + '" aria-label="入室"><span class="muted">〜</span><input type="time" id="l-out" value="' + toHHMM(e.outAt) + '" aria-label="退出"></div>'
+    + '<span class="hint">予定時刻が登録されていない家庭は、この時刻が業務日報のサービス時間に入ります。</span></div>'
+    + '<button class="btn big primary" data-act="logSave">保存する</button></div>';
+  out += S.ui.confirmLogDelete
+    ? '<div class="alert danger"><p>この記録を削除します。元に戻せません。</p><div class="btnrow"><button class="btn sm danger" data-act="logDelete">削除する</button><button class="btn sm" data-act="ui" data-key="confirmLogDelete">やめる</button></div></div>'
+    : '<button class="btn danger" data-act="ui" data-key="confirmLogDelete" data-on="1">この記録を削除</button>';
   return out;
 }
 
@@ -787,6 +831,48 @@ app.addEventListener("click", e => {
       break;
     }
     case "cancelIn": cancelEntry(V.id); break;
+    case "enterAt": {
+      const t = document.getElementById("v-enter").value;
+      if (!t) { toast("時刻を選んでください"); break; }
+      enter(V.id, atTime(new Date().toISOString(), t), true); S.ui = {}; render();
+      toast("入室を記録しました");
+      break;
+    }
+    case "editIn": {
+      const t = document.getElementById("v-in").value, v = S.visits[V.id];
+      if (!t || !v) { toast("時刻を選んでください"); break; }
+      v.inAt = atTime(v.inAt, t); v.inEdited = true;
+      write("visits/" + V.id, v); S.ui = {}; render();
+      toast("入室時刻を直しました");
+      break;
+    }
+    case "exitAt": {
+      const t = document.getElementById("v-exit").value, v = S.visits[V.id];
+      if (!t || !v) { toast("時刻を選んでください"); break; }
+      const outAt = atTime(v.inAt, t);
+      if (new Date(outAt) < new Date(v.inAt)) { toast("退出時刻が入室時刻より前になっています"); break; }
+      exitVisit(V.id, outAt, true);
+      break;
+    }
+    case "logEdit": go({ name: "logEdit", idx: Number(el.dataset.idx) }); break;
+    case "logSave": {
+      const e = S.log[V.idx], tin = document.getElementById("l-in").value, tout = document.getElementById("l-out").value;
+      if (!e || !tin || !tout) { toast("時刻を選んでください"); break; }
+      const inAt = atTime(e.inAt, tin), outAt = atTime(e.inAt, tout);
+      if (new Date(outAt) < new Date(inAt)) { toast("退出時刻が入室時刻より前になっています"); break; }
+      if (inAt !== e.inAt || outAt !== e.outAt) {
+        Object.assign(e, { inAt, outAt, edited: true });
+        write("log/recent", { entries: S.log });
+      }
+      toast("保存しました"); go({ name: "list" });
+      break;
+    }
+    case "logDelete": {
+      S.log.splice(V.idx, 1);
+      write("log/recent", { entries: S.log });
+      toast("記録を削除しました"); go({ name: "list" });
+      break;
+    }
     case "task": toggle(V.id, "task", el.dataset.item); break;
     case "final": toggle(V.id, "final", el.dataset.item); break;
     case "copy": copyText(el.dataset.text); break;
