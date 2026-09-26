@@ -149,6 +149,8 @@ a{color:var(--accent)}
 .alert.danger{background:var(--danger-soft);color:var(--danger)}
 .alert ul{margin:0;padding-left:1.2em;color:var(--ink)}
 
+.howto{margin:0;padding:10px 14px 10px 2.2em;background:var(--accent-soft);border-radius:12px;font-size:.93rem;display:flex;flex-direction:column;gap:2px}
+.howto b{color:var(--accent)}
 .msgbox{background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:.95rem;user-select:text;-webkit-user-select:text}
 
 /* forms */
@@ -233,7 +235,9 @@ const fmtTime = iso => { const d = new Date(iso); return d.getHours() + ":" + pa
 const fmtDate = iso => { const d = new Date(iso); return (d.getMonth()+1) + "月" + d.getDate() + "日(" + "日月火水木金土"[d.getDay()] + ")"; };
 const fmtDur = (a, b) => { const m = Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000)); return (m >= 60 ? Math.floor(m/60) + "時間" : "") + (m % 60) + "分"; };
 const lineUrl = text => "https://line.me/R/share?text=" + encodeURIComponent(text);
-const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--ok-ink)"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+const LINE_HOWTO = '<ol class="howto"><li>送信先のトークを選ぶ</li><li>右上の<b>「転送」</b>を押すと送られます</li></ol>'
+  + '<p class="small muted">連絡文は画面に出ませんが、転送すると届きます。下の「メッセージを入力」は空のままで大丈夫です。</p>';
+const CHECK_SVG ='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--ok-ink)"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
 
 function message(kind, home, iso, settings){
   const st = settings || S.settings;
@@ -425,7 +429,7 @@ function viewVisit(){
   // 1 入室
   out += '<section class="step"><div class="step-h"><span class="no' + (v ? " ok" : "") + '">1</span><h2>入室</h2></div>';
   if (!v) {
-    out += '<p class="small muted">到着したら押してください。入室時刻を記録し、連絡文の入ったLINEが開きます。送信先を選んで送ってください。</p>'
+    out += '<p class="small muted">到着したら押してください。入室時刻を記録し、LINEが開きます。</p>' + LINE_HOWTO
       + '<a class="btn big primary" data-act="enter" href="' + esc(lineUrl(message("in", h, new Date().toISOString()))) + '" target="_blank" rel="noopener">入室する（LINEを開く）</a>';
   } else {
     const txt = message("in", h, v.inAt);
@@ -469,9 +473,9 @@ function viewVisit(){
     const left = tasks.filter(t => !(v.done && v.done[t.id]));
     out += '<div class="alert warn"><p><b class="num">終わっていない作業が ' + left.length + ' 件あります。</b></p><ul>'
       + left.map(t => '<li>' + esc(t.text) + '</li>').join("") + '</ul>'
-      + '<div class="btnrow"><button class="btn sm" data-act="ui" data-key="confirmExit">作業に戻る</button>' + outBtn("このまま退出する").replace("btn big go", "btn sm warn") + '</div></div>';
+      + '<div class="btnrow"><button class="btn sm" data-act="ui" data-key="confirmExit">作業に戻る</button>' + outBtn("このまま退出する").replace("btn big go", "btn sm warn") + '</div></div>' + LINE_HOWTO;
   } else {
-    out += outBtn("退出する（LINEを開く）") + '<p class="small muted">退出時刻を記録し、連絡文の入ったLINEが開きます。</p>';
+    out += '<p class="small muted">退出時刻を記録し、LINEが開きます。</p>' + LINE_HOWTO + outBtn("退出する（LINEを開く）");
   }
   out += '</section>';
   return out;
@@ -483,7 +487,7 @@ function viewDone(){
     + '<dl class="kv num"><dt>訪問先</dt><dd>' + esc(e.name) + '</dd><dt>入室</dt><dd>' + esc(fmtTime(e.inAt)) + '</dd><dt>退出</dt><dd>' + esc(fmtTime(e.outAt)) + '（' + esc(fmtDur(e.inAt, e.outAt)) + '）</dd>'
     + '<dt>作業</dt><dd>' + e.done + ' / ' + e.total + ' 完了</dd></dl>'
     + '<p class="lbl">退出連絡の文面</p><div class="msgbox" data-msgbox>' + esc(txt) + '</div>'
-    + '<p class="small muted">LINEで送信できていなければ、もう一度開いて送ってください。</p>'
+    + '<p class="small muted">LINEで送信できていなければ、「LINEをもう一度開く」から送ってください。</p>' + LINE_HOWTO
     + '<div class="btnrow"><a class="btn sm" href="' + esc(lineUrl(txt)) + '" target="_blank" rel="noopener">LINEをもう一度開く</a>'
     + '<button class="btn sm" data-act="copy" data-text="' + esc(txt) + '">文面をコピー</button></div></div>'
     + '<button class="btn big primary" data-act="back">一覧へ戻る</button>';
