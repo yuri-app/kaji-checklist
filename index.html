@@ -97,6 +97,14 @@ a{color:var(--accent)}
 .home.active{border-color:var(--ok);border-width:2px}
 .pill{display:inline-flex;align-items:center;gap:6px;font-size:.78rem;font-weight:700;padding:2px 10px;border-radius:999px;background:var(--surface2);color:var(--muted);border:1px solid var(--line);white-space:nowrap}
 .pill.on{background:var(--ok-soft);color:var(--ok);border-color:transparent}
+.pill.warn{background:var(--warn-soft);color:var(--warn);border-color:transparent}
+.home.due{border-color:var(--warn);border-width:2px}
+.rhead{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.rhead .btn{flex:none;min-height:36px;padding:4px 14px}
+textarea[readonly],input[readonly]{background:var(--surface2)}
+.time2{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center}
+input[type=time]{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 10px;min-height:46px}
+button.notice{font:inherit;font-size:.88rem;width:100%;cursor:pointer}
 .pill.dot::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
 
 .notice{background:var(--warn-soft);color:var(--warn);border-radius:12px;padding:10px 14px;font-size:.88rem}
@@ -197,10 +205,14 @@ const DEFAULT_FINALS = [
 const DEFAULT_SETTINGS = {
   staff: "",
   inTpl: "【入室】{家庭} {時刻} 入室しました。",
-  outTpl: "【退出】{家庭} {時刻} 退出しました。"
+  outTpl: "【退出】{家庭} {時刻} 退出しました。",
+  fullName: "",
+  reportUrl: ""
 };
 const SAMPLE_HOME = {
-  name: "（例）見本様宅",
+  name: "（例）見本様",
+  start: "10:00",
+  end: "12:00",
   memo: "これは見本です。自分の訪問先を登録したら、「編集」→「この家庭を削除」で消してください。\n鍵：ポスト内のキーボックス／猫がいるので玄関の開け閉めに注意",
   tasks: [
     "玄関の掃き掃除・靴をそろえる",
@@ -218,7 +230,7 @@ const LOG_MAX = 60;
 
 const S = {
   mode: "loading",          // loading | db | local
-  homes: {}, visits: {}, settings: Object.assign({}, DEFAULT_SETTINGS), log: [],
+  homes: {}, visits: {}, settings: Object.assign({}, DEFAULT_SETTINGS), log: [], reports: {},
   view: { name: "list" },
   ui: {},
   got: {}
@@ -234,6 +246,12 @@ const pad = n => String(n).padStart(2, "0");
 const fmtTime = iso => { const d = new Date(iso); return d.getHours() + ":" + pad(d.getMinutes()); };
 const fmtDate = iso => { const d = new Date(iso); return (d.getMonth()+1) + "月" + d.getDate() + "日(" + "日月火水木金土"[d.getDay()] + ")"; };
 const fmtDur = (a, b) => { const m = Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000)); return (m >= 60 ? Math.floor(m/60) + "時間" : "") + (m % 60) + "分"; };
+const dayKey = iso => { const d = new Date(iso); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); };
+const fmtDay = key => { const [y, m, d] = key.split("-").map(Number); return fmtDate(new Date(y, m - 1, d).toISOString()); };
+const hm = v => String(v || "").replace(/^0(\d)/, "$1"); // "09:00" → "9:00"
+const CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
+const numbered = list => list.length === 1 ? list[0] : list.map((s, i) => (CIRCLED[i] || "(" + (i + 1) + ")") + s).join("　");
+const reportName = name => String(name || "").replace(/宅$/, "");
 const lineUrl = text => "https://line.me/R/share?text=" + encodeURIComponent(text);
 const LINE_HOWTO = '<ol class="howto"><li>送信先のトークを選ぶ</li><li>右上の<b>「転送」</b>を押すと送られます</li></ol>'
   + '<p class="small muted">連絡文は画面に出ませんが、転送すると届きます。下の「メッセージを入力」は空のままで大丈夫です。</p>';
@@ -266,12 +284,15 @@ function toast(text){
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { el.hidden = true; }, 2600);
 }
-async function copyText(text){
-  try { await navigator.clipboard.writeText(text); toast("文面をコピーしました"); }
+async function copyText(text, field){
+  try { await navigator.clipboard.writeText(text); toast(field ? "コピーしました" : "文面をコピーしました"); }
   catch (e) {
-    const box = document.querySelector("[data-msgbox]");
-    if (box) { const r = document.createRange(); r.selectNodeContents(box); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
-    toast("文面を選択しました。長押しでコピーしてください");
+    if (field) { field.focus(); field.select(); }
+    else {
+      const box = document.querySelector("[data-msgbox]");
+      if (box) { const r = document.createRange(); r.selectNodeContents(box); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+    }
+    toast("文字を選択しました。長押しでコピーしてください");
   }
 }
 
@@ -302,12 +323,12 @@ async function flush(path){
   q.running = false;
 }
 function saveLocal(){
-  try { localStorage.setItem(LOCAL_KEY, JSON.stringify({ homes: S.homes, visits: S.visits, settings: S.settings, log: S.log })); } catch (e) {}
+  try { localStorage.setItem(LOCAL_KEY, JSON.stringify({ homes: S.homes, visits: S.visits, settings: S.settings, log: S.log, reports: S.reports })); } catch (e) {}
 }
 function loadLocal(){
   try {
     const d = JSON.parse(localStorage.getItem(LOCAL_KEY) || "null");
-    if (d) { S.homes = d.homes || {}; S.visits = d.visits || {}; S.settings = Object.assign({}, DEFAULT_SETTINGS, d.settings || {}); S.log = d.log || []; }
+    if (d) { S.homes = d.homes || {}; S.visits = d.visits || {}; S.settings = Object.assign({}, DEFAULT_SETTINGS, d.settings || {}); S.log = d.log || []; S.reports = d.reports || {}; }
   } catch (e) {}
 }
 function startLocal(){ S.mode = "local"; loadLocal(); render(); }
@@ -330,10 +351,14 @@ function startDb(){
   db.doc("log/recent").onSnapshot(snap => {
     S.log = snap.exists ? clone(snap.data().entries || []) : []; mark("log"); softRender();
   }, onErr);
+  db.collection("reports").onSnapshot(snap => {
+    const r = {}; snap.docs.forEach(d => { r[d.id] = clone(d.data()); });
+    S.reports = r; mark("reports"); softRender();
+  }, onErr);
 }
-// 入力中の画面（編集・設定）はデータ更新で描き直さない
+// 入力中の画面（編集・設定・日報）はデータ更新で描き直さない
 function softRender(){
-  if (S.view.name === "edit" || S.view.name === "settings") return;
+  if (S.view.name === "edit" || S.view.name === "settings" || S.view.name === "report") return;
   render();
 }
 
@@ -365,12 +390,12 @@ function exitVisit(id, outAt){
 
 /* ---------- views ---------- */
 function render(){
-  if (S.mode === "loading" || (S.mode === "db" && !(S.got.homes && S.got.visits && S.got.settings && S.got.log))) {
+  if (S.mode === "loading" || (S.mode === "db" && !(S.got.homes && S.got.visits && S.got.settings && S.got.log && S.got.reports))) {
     app.innerHTML = '<p class="loading">読み込み中…</p>'; return;
   }
   const v = S.view;
   if (v.name === "visit" && !S.homes[v.id]) S.view = { name: "list" };
-  const html = { list: viewList, visit: viewVisit, edit: viewEdit, settings: viewSettings, done: viewDone }[S.view.name]();
+  const html = { list: viewList, visit: viewVisit, edit: viewEdit, settings: viewSettings, done: viewDone, report: viewReport }[S.view.name]();
   app.innerHTML = html;
   if (S.view.name === "edit") { renderEditor("tasks"); renderEditor("finals"); }
   keepAwake(S.view.name === "visit" && !!S.visits[S.view.id]);
@@ -383,6 +408,9 @@ function viewList(){
   let out = '<header class="top"><div><p class="eyebrow num">' + esc(fmtDate(now)) + '</p><h1>家事代行チェックリスト</h1></div>'
     + '<button class="btn sm ghost" data-act="settings">設定</button></header>';
   if (S.mode === "local" && homes.length) out += '<p class="notice">データはこのスマホの中に保存されます。機種変更やブラウザのデータ削除の前に、「設定」から書き出してください。</p>';
+
+  const overdue = pastUnsent();
+  if (overdue.length) out += '<button class="notice" data-act="report" data-day="' + overdue[0] + '" style="border:0;text-align:left">' + esc(fmtDay(overdue[0])) + ' の業務日報が未送信です。押すと開きます。</button>';
 
   out += '<section class="section"><div class="section-head"><h2>訪問先</h2><span class="small muted num">' + homes.length + '件</span></div>';
   if (!homes.length) {
@@ -400,6 +428,7 @@ function viewList(){
     }).join("") + '</div>';
   }
   out += '<button class="btn" data-act="new">＋ 家庭を追加</button></section>';
+  out += viewReportRows();
 
   if (S.log.length) {
     out += '<section class="section"><h2>最近の記録</h2><div class="log">' + S.log.slice(0, 10).map(e =>
@@ -408,6 +437,87 @@ function viewList(){
     ).join("") + '</div></section>';
   }
   return out;
+}
+
+/* --- 日報 --- */
+function dayEntries(key){
+  return S.log.filter(e => dayKey(e.inAt) === key).sort((a, b) => new Date(a.inAt) - new Date(b.inAt));
+}
+function autoReport(key){
+  const es = dayEntries(key);
+  return {
+    customers: numbered(es.map(e => reportName((S.homes[e.homeId] || {}).name || e.name))),
+    times: numbered(es.map(e => {
+      const h = S.homes[e.homeId];
+      return h && h.start && h.end ? hm(h.start) + "-" + hm(h.end) : fmtTime(e.inAt) + "-" + fmtTime(e.outAt);
+    }))
+  };
+}
+// 過去7日のうち、訪問があって日報が未送信の日（新しい順）
+function pastUnsent(){
+  const today = dayKey(new Date().toISOString()), cutoff = Date.now() - 7 * 864e5;
+  return [...new Set(S.log.map(e => dayKey(e.inAt)))]
+    .filter(k => k !== today && new Date(k + "T00:00").getTime() >= cutoff && !(S.reports[k] && S.reports[k].sent))
+    .sort().reverse();
+}
+function viewReportRows(){
+  const today = dayKey(new Date().toISOString()), past = pastUnsent();
+  const row = (key, label) => {
+    const n = dayEntries(key).length, sent = S.reports[key] && S.reports[key].sent;
+    const pill = sent ? '<span class="pill on">送信済み</span>'
+      : n ? '<span class="pill warn dot">未送信</span>' : '<span class="pill">訪問なし</span>';
+    return '<button class="home' + (!sent && n ? " due" : "") + '" data-act="report" data-day="' + key + '">'
+      + '<span class="name">' + label + '</span><span class="chev" aria-hidden="true">›</span>'
+      + '<span class="meta num">' + esc(fmtDay(key)) + (n ? '・訪問 ' + n + '件' : '') + '　' + pill + '</span></button>';
+  };
+  return '<section class="section"><h2>業務日報</h2><div class="homes">'
+    + row(today, "今日の日報") + past.map(k => row(k, "未送信の日報")).join("") + '</div></section>';
+}
+function viewReport(){
+  const key = S.view.day, r = S.reports[key] || {}, a = autoReport(key), st = S.settings;
+  const n = dayEntries(key).length;
+  const val = f => r[f] != null ? r[f] : "";
+  const field = (id, label, value, opt) => {
+    opt = opt || {};
+    const ctl = opt.multi
+      ? '<textarea id="' + id + '" rows="' + (opt.rows || 2) + '" placeholder="' + esc(opt.ph || "") + '"' + (opt.ro ? " readonly" : "") + '>' + esc(value) + '</textarea>'
+      : '<input type="text" id="' + id + '" value="' + esc(value) + '" placeholder="' + esc(opt.ph || "") + '"' + (opt.ro ? " readonly" : "") + '>';
+    return '<div class="field rfield"><div class="rhead"><label for="' + id + '">' + label + '</label>'
+      + '<button class="btn sm" data-act="copyField" data-field="' + id + '">コピー</button></div>' + ctl
+      + (opt.hint ? '<span class="hint">' + opt.hint + '</span>' : '') + '</div>';
+  };
+  const edited = f => r[f] != null && r[f] !== a[f];
+  let out = '<div class="bar"><div class="bar-top"><button class="navbtn" data-act="back">‹ 一覧</button><span class="t">業務日報</span><span class="navbtn" aria-hidden="true" style="visibility:hidden">‹ 一覧</span></div></div>';
+  out += '<p class="eyebrow num">' + esc(fmtDay(key)) + '（お伺い日）</p>';
+  if (r.sent) out += '<p class="okline num">✓ 送信済み' + (r.sentAt ? '（' + esc(fmtTime(r.sentAt)) + '）' : '') + '</p>';
+  if (!n) out += '<p class="notice">この日の退出記録はまだありません。退出すると、お客様のお名前とサービス時間が自動で入ります。</p>';
+  out += '<p class="small muted">項目ごとに「コピー」を押し、日報フォームの同じ項目に貼り付けてください。</p>';
+
+  out += '<div class="card">'
+    + field("r-name", "ご自身のお名前", st.fullName, { ro: true, ph: "「設定」で登録してください", hint: st.fullName ? "" : "「設定」の「日報用のお名前」に登録すると、ここに出ます。" })
+    + field("r-customers", "お客様のお名前", r.customers != null ? r.customers : a.customers, { multi: true, hint: edited("customers") ? '<button class="linkbtn small" data-act="reportAuto" data-f="customers">自動作成に戻す</button>' : "訪問順に自動で作成しています。直すこともできます。" })
+    + field("r-times", "サービス時間", r.times != null ? r.times : a.times, { multi: true, hint: edited("times") ? '<button class="linkbtn small" data-act="reportAuto" data-f="times">自動作成に戻す</button>' : "各家庭の予定時刻から作成しています。予定がない家庭は入室〜退出の時刻です。" })
+    + '</div>';
+  out += '<div class="card">'
+    + field("r-fare", "往復交通費（パーキング代など含む）", val("fare"), { ph: "例：600円 内パーキング代500円" })
+    + field("r-fareDetail", "交通費詳細", val("fareDetail"), { multi: true, ph: "例：電車 名古屋駅→栄駅／車 往復12km" })
+    + field("r-rest", "休憩時間（取得した場合のみ）", val("rest"), { ph: "例：12:00-12:30" })
+    + field("r-notes", "その他報告事項（作業内容）", val("notes"), { multi: true, rows: 4, ph: "日程調整・変更、立替金・入金対応など" })
+    + '<p class="small muted">領収書・写真は、日報フォームで直接添付してください。</p></div>';
+
+  out += st.reportUrl
+    ? '<a class="btn big primary" href="' + esc(st.reportUrl) + '" target="_blank" rel="noopener">日報フォームを開く</a>'
+    : '<div class="alert warn"><p>日報フォームのアドレスが未登録です。「設定」の「日報フォームのアドレス」に登録すると、ここから開けます。</p><button class="btn sm" data-act="settings">設定を開く</button></div>';
+  out += r.sent
+    ? '<button class="btn" data-act="reportSent">未送信に戻す</button>'
+    : '<button class="btn big go" data-act="reportSent" data-on="1">送信済みにする</button>';
+  return out;
+}
+let reportTimer = null;
+function saveReport(key, patch){
+  S.reports[key] = Object.assign({}, S.reports[key] || {}, patch);
+  clearTimeout(reportTimer);
+  reportTimer = setTimeout(() => write("reports/" + key, S.reports[key]), 500);
 }
 
 function checkRow(kind, item, checked, disabled){
@@ -498,7 +608,9 @@ function viewEdit(){
   const d = S.view.draft, isNew = S.view.isNew;
   let out = '<div class="bar"><div class="bar-top"><button class="navbtn" data-act="editCancel">キャンセル</button><span class="t">' + (isNew ? "家庭を追加" : "家庭を編集") + '</span>'
     + '<button class="navbtn" data-act="editSave">保存</button></div></div>';
-  out += '<div class="card"><div class="field"><label for="f-name">家庭の名前</label><input type="text" id="f-name" value="' + esc(d.name) + '" placeholder="例：佐藤様宅（火曜）"></div>'
+  out += '<div class="card"><div class="field"><label for="f-name">家庭の名前</label><input type="text" id="f-name" value="' + esc(d.name) + '" placeholder="例：佐藤様"><span class="hint">業務日報の「お客様のお名前」にも、この名前が入ります。</span></div>'
+    + '<div class="field"><span class="lbl">予定時刻</span><div class="time2"><input type="time" id="f-start" value="' + esc(d.start) + '" aria-label="開始"><span class="muted">〜</span><input type="time" id="f-end" value="' + esc(d.end) + '" aria-label="終了"></div>'
+    + '<span class="hint">業務日報の「サービス時間」に入ります。空欄なら、入室〜退出の時刻が入ります。</span></div>'
     + '<div class="field"><label for="f-memo">メモ・注意事項</label><textarea id="f-memo" placeholder="例：鍵の受け取り方法、ペット、触ってはいけない物など">' + esc(d.memo) + '</textarea>'
     + '<span class="hint">作業画面の一番上に表示されます。</span></div></div>';
   out += '<div class="card"><div class="section-head"><h2>作業</h2><span class="small muted">上から順に表示</span></div><div class="editor" id="ed-tasks"></div>'
@@ -536,7 +648,7 @@ function saveEdit(){
   if (!d.name) { toast("家庭の名前を入力してください"); const n = document.getElementById("f-name"); if (n) n.focus(); return; }
   const clean = arr => arr.map(t => ({ id: t.id, text: t.text.trim() })).filter(t => t.text);
   const id = d.id || uid();
-  const rec = { name: d.name, memo: d.memo.trim(), tasks: clean(d.tasks), finals: clean(d.finals), sort: d.sort };
+  const rec = { name: d.name, memo: d.memo.trim(), start: d.start || "", end: d.end || "", tasks: clean(d.tasks), finals: clean(d.finals), sort: d.sort };
   if (S.view.isNew) rec.sort = Math.max(0, ...Object.values(S.homes).map(h => h.sort || 0)) + 1;
   S.homes[id] = Object.assign({ id }, rec);
   write("homes/" + id, rec);
@@ -547,9 +659,13 @@ function saveEdit(){
 /* --- settings --- */
 function viewSettings(){
   const d = S.view.draft;
-  const sample = { name: "佐藤様宅" }, iso = new Date().toISOString();
+  const sample = { name: "佐藤様" }, iso = new Date().toISOString();
   return '<div class="bar"><div class="bar-top"><button class="navbtn" data-act="back">キャンセル</button><span class="t">設定</span><button class="navbtn" data-act="settingsSave">保存</button></div></div>'
     + '<div class="card"><div class="field"><label for="s-staff">担当者名</label><input type="text" id="s-staff" value="' + esc(d.staff) + '" placeholder="例：松井"><span class="hint">文面に {担当} と書いた場所に入ります。</span></div></div>'
+    + '<div class="card"><h2>業務日報</h2>'
+    + '<div class="field"><label for="s-fullname">日報用のお名前（漢字フルネーム）</label><input type="text" id="s-fullname" value="' + esc(d.fullName) + '" autocomplete="name"></div>'
+    + '<div class="field"><label for="s-report">日報フォームのアドレス</label><input type="text" id="s-report" value="' + esc(d.reportUrl) + '" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://docs.google.com/forms/…">'
+    + '<span class="hint">このスマホの中だけに保存されます。</span></div></div>'
     + '<div class="card"><div class="field"><label for="s-in">入室の文面</label><textarea id="s-in">' + esc(d.inTpl) + '</textarea></div>'
     + '<div class="field"><label for="s-out">退出の文面</label><textarea id="s-out">' + esc(d.outTpl) + '</textarea></div>'
     + '<p class="hint small muted">使える差し込み：{家庭}　{時刻}　{日付}　{担当}</p>'
@@ -571,7 +687,7 @@ function viewBackup(){
   return out + '</div>';
 }
 function exportData(){
-  const data = { app: EXPORT_APP, version: 1, exportedAt: new Date().toISOString(), homes: S.homes, visits: S.visits, settings: S.settings, log: S.log };
+  const data = { app: EXPORT_APP, version: 1, exportedAt: new Date().toISOString(), homes: S.homes, visits: S.visits, settings: S.settings, log: S.log, reports: S.reports };
   const d = new Date();
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
@@ -599,7 +715,8 @@ function applyImport(){
   const next = {
     homes: data.homes || {}, visits: data.visits || {},
     settings: Object.assign({}, DEFAULT_SETTINGS, data.settings || {}),
-    log: Array.isArray(data.log) ? data.log.slice(0, LOG_MAX) : []
+    log: Array.isArray(data.log) ? data.log.slice(0, LOG_MAX) : [],
+    reports: data.reports && typeof data.reports === "object" ? data.reports : {}
   };
   if (S.mode === "db") {
     Object.keys(S.homes).forEach(id => { if (!next.homes[id]) write("homes/" + id, null); });
@@ -615,7 +732,7 @@ function applyImport(){
 }
 function updatePreview(){
   const el = document.getElementById("s-prev"); if (!el) return;
-  const iso = new Date().toISOString(), sample = { name: "佐藤様宅" }, d = S.view.draft;
+  const iso = new Date().toISOString(), sample = { name: "佐藤様" }, d = S.view.draft;
   el.textContent = message("in", sample, iso, d) + "\n" + message("out", sample, iso, d);
 }
 
@@ -627,10 +744,10 @@ app.addEventListener("click", e => {
     case "open": go({ name: "visit", id: el.dataset.id }); break;
     case "back": go({ name: "list" }); break;
     case "settings": go({ name: "settings", draft: clone(S.settings) }); break;
-    case "new": go({ name: "edit", isNew: true, back: "list", draft: { name: "", memo: "", tasks: [], finals: DEFAULT_FINALS.map(t => ({ id: uid(), text: t })) } }); break;
+    case "new": go({ name: "edit", isNew: true, back: "list", draft: { name: "", memo: "", start: "", end: "", tasks: [], finals: DEFAULT_FINALS.map(t => ({ id: uid(), text: t })) } }); break;
     case "edit": {
       const h = S.homes[el.dataset.id];
-      go({ name: "edit", isNew: false, back: "visit", draft: { id: h.id, name: h.name || "", memo: h.memo || "", sort: h.sort || 0, tasks: clone(h.tasks || []), finals: clone(h.finals || []) } });
+      go({ name: "edit", isNew: false, back: "visit", draft: { id: h.id, name: h.name || "", memo: h.memo || "", start: h.start || "", end: h.end || "", sort: h.sort || 0, tasks: clone(h.tasks || []), finals: clone(h.finals || []) } });
       break;
     }
     case "ui": {
@@ -675,14 +792,16 @@ app.addEventListener("click", e => {
     }
     case "settingsSave": {
       const d = V.draft;
-      S.settings = { staff: d.staff.trim(), inTpl: d.inTpl.trim() || DEFAULT_SETTINGS.inTpl, outTpl: d.outTpl.trim() || DEFAULT_SETTINGS.outTpl };
+      const url = d.reportUrl.trim();
+      if (url && !/^https:\/\//.test(url)) { toast("日報フォームのアドレスは https:// から始まるものを入れてください"); break; }
+      S.settings = { staff: d.staff.trim(), inTpl: d.inTpl.trim() || DEFAULT_SETTINGS.inTpl, outTpl: d.outTpl.trim() || DEFAULT_SETTINGS.outTpl, fullName: d.fullName.trim(), reportUrl: url };
       write("settings/main", S.settings); toast("保存しました"); go({ name: "list" });
       break;
     }
     case "sample": {
       const id = uid();
       const rec = {
-        name: SAMPLE_HOME.name, memo: SAMPLE_HOME.memo,
+        name: SAMPLE_HOME.name, memo: SAMPLE_HOME.memo, start: SAMPLE_HOME.start, end: SAMPLE_HOME.end,
         sort: Math.max(0, ...Object.values(S.homes).map(h => h.sort || 0)) + 1,
         tasks: SAMPLE_HOME.tasks.map(t => ({ id: uid(), text: t })),
         finals: DEFAULT_FINALS.map(t => ({ id: uid(), text: t }))
@@ -690,6 +809,26 @@ app.addEventListener("click", e => {
       S.homes[id] = Object.assign({ id }, rec);
       write("homes/" + id, rec);
       render();
+      break;
+    }
+    case "report": go({ name: "report", day: el.dataset.day }); break;
+    case "copyField": {
+      const f = document.getElementById(el.dataset.field);
+      if (!f || !f.value.trim()) { toast("コピーする内容がありません"); break; }
+      copyText(f.value, f);
+      break;
+    }
+    case "reportAuto": {
+      const r = S.reports[V.day];
+      if (r) { delete r[el.dataset.f]; saveReport(V.day, {}); }
+      render();
+      break;
+    }
+    case "reportSent": {
+      const on = !!el.dataset.on;
+      saveReport(V.day, { sent: on, sentAt: on ? new Date().toISOString() : null });
+      toast(on ? "送信済みにしました" : "未送信に戻しました");
+      if (on) go({ name: "list" }); else render();
       break;
     }
     case "export": exportData(); break;
@@ -708,9 +847,16 @@ app.addEventListener("input", e => {
   if (V.name === "edit") {
     if (t.id === "f-name") V.draft.name = t.value;
     else if (t.id === "f-memo") V.draft.memo = t.value;
+    else if (t.id === "f-start") V.draft.start = t.value;
+    else if (t.id === "f-end") V.draft.end = t.value;
     else if (t.dataset.list) { const it = V.draft[t.dataset.list].find(x => x.id === t.dataset.item); if (it) it.text = t.value; }
+  } else if (V.name === "report") {
+    const map = { "r-customers": "customers", "r-times": "times", "r-fare": "fare", "r-fareDetail": "fareDetail", "r-rest": "rest", "r-notes": "notes" };
+    if (map[t.id]) saveReport(V.day, { [map[t.id]]: t.value });
   } else if (V.name === "settings") {
     if (t.id === "s-staff") V.draft.staff = t.value;
+    if (t.id === "s-fullname") V.draft.fullName = t.value;
+    if (t.id === "s-report") V.draft.reportUrl = t.value;
     if (t.id === "s-in") V.draft.inTpl = t.value;
     if (t.id === "s-out") V.draft.outTpl = t.value;
     updatePreview();
@@ -718,6 +864,7 @@ app.addEventListener("input", e => {
 });
 app.addEventListener("change", e => {
   if (e.target.id === "s-import" && e.target.files && e.target.files[0]) readImport(e.target.files[0]);
+  if (S.view.name === "edit" && (e.target.id === "f-start" || e.target.id === "f-end")) S.view.draft[e.target.id === "f-start" ? "start" : "end"] = e.target.value;
 });
 app.addEventListener("keydown", e => {
   const t = e.target;
