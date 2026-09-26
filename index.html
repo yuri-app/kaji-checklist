@@ -232,7 +232,7 @@ const pad = n => String(n).padStart(2, "0");
 const fmtTime = iso => { const d = new Date(iso); return d.getHours() + ":" + pad(d.getMinutes()); };
 const fmtDate = iso => { const d = new Date(iso); return (d.getMonth()+1) + "月" + d.getDate() + "日(" + "日月火水木金土"[d.getDay()] + ")"; };
 const fmtDur = (a, b) => { const m = Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000)); return (m >= 60 ? Math.floor(m/60) + "時間" : "") + (m % 60) + "分"; };
-const lineUrl = text => "https://line.me/R/msg/text/?" + encodeURIComponent(text);
+const lineUrl = text => "https://line.me/R/share?text=" + encodeURIComponent(text);
 const CHECK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--ok-ink)"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
 
 function message(kind, home, iso, settings){
