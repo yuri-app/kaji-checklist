@@ -208,6 +208,7 @@ const DEFAULT_SETTINGS = {
   inTpl: "【入室】{家庭} {時刻} 入室しました。",
   outTpl: "【退出】{家庭} {時刻} 退出しました。",
   fullName: "",
+  email: "",
   reportUrl: ""
 };
 const SAMPLE_HOME = {
@@ -253,6 +254,17 @@ const hm = v => String(v || "").replace(/^0(\d)/, "$1"); // "09:00" → "9:00"
 const CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
 const numbered = list => list.length === 1 ? list[0] : list.map((s, i) => (CIRCLED[i] || "(" + (i + 1) + ")") + s).join("　");
 const reportName = name => String(name || "").replace(/宅$/, "");
+// 日報フォームのアドレスに {名前} などの差し込みがあれば、日報の内容を入れたアドレスにする
+const REPORT_KEYS = { "名前": "r-name", "お客様": "r-customers", "時間": "r-times", "交通費": "r-fare", "交通費詳細": "r-fareDetail", "休憩": "r-rest", "報告": "r-notes" };
+const hasPrefill = url => /\{(名前|メール|日付|お客様|時間|交通費|交通費詳細|休憩|報告)\}/.test(url || "");
+function prefillUrl(url, day){
+  return url.replace(/\{(名前|メール|日付|お客様|時間|交通費|交通費詳細|休憩|報告)\}/g, (m, k) => {
+    if (k === "日付") return day;
+    if (k === "メール") return encodeURIComponent(S.settings.email || "");
+    const el = document.getElementById(REPORT_KEYS[k]);
+    return encodeURIComponent(el ? el.value.trim() : "");
+  });
+}
 const lineUrl = text => "https://line.me/R/share?text=" + encodeURIComponent(text);
 const LINE_HOWTO = '<ol class="howto"><li>送信先のトークを選ぶ</li><li>右上の<b>「転送」</b>を押すと送られます</li></ol>'
   + '<p class="small muted">連絡文は画面に出ませんが、転送すると届きます。下の「メッセージを入力」は空のままで大丈夫です。</p>';
@@ -506,7 +518,10 @@ function viewReport(){
     + '<p class="small muted">領収書・写真は、日報フォームで直接添付してください。</p></div>';
 
   out += st.reportUrl
-    ? '<a class="btn big primary" href="' + esc(st.reportUrl) + '" target="_blank" rel="noopener">日報フォームを開く</a>'
+    ? (hasPrefill(st.reportUrl)
+        ? '<p class="small muted">上の内容が入った状態でフォームが開きます。写真・領収書を添付して、フォームの「送信」を押してください。</p>'
+        : '')
+      + '<a class="btn big primary" data-act="openForm" href="' + esc(st.reportUrl.replace(/\{[^}]*\}/g, "")) + '" target="_blank" rel="noopener">日報フォームを開く</a>'
     : '<div class="alert warn"><p>日報フォームのアドレスが未登録です。「設定」の「日報フォームのアドレス」に登録すると、ここから開けます。</p><button class="btn sm" data-act="settings">設定を開く</button></div>';
   out += r.sent
     ? '<button class="btn" data-act="reportSent">未送信に戻す</button>'
@@ -666,8 +681,9 @@ function viewSettings(){
     + '<div class="card"><div class="field"><label for="s-staff">担当者名</label><input type="text" id="s-staff" value="' + esc(d.staff) + '" placeholder="例：松井"><span class="hint">文面に {担当} と書いた場所に入ります。</span></div></div>'
     + '<div class="card"><h2>業務日報</h2>'
     + '<div class="field"><label for="s-fullname">日報用のお名前（漢字フルネーム）</label><input type="text" id="s-fullname" value="' + esc(d.fullName) + '" autocomplete="name"></div>'
+    + '<div class="field"><label for="s-email">日報用のメールアドレス</label><input type="email" id="s-email" value="' + esc(d.email) + '" autocomplete="email" autocapitalize="off" spellcheck="false"></div>'
     + '<div class="field"><label for="s-report">日報フォームのアドレス</label><input type="text" id="s-report" value="' + esc(d.reportUrl) + '" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://docs.google.com/forms/…">'
-    + '<span class="hint">このスマホの中だけに保存されます。</span></div></div>'
+    + '<span class="hint">このスマホの中だけに保存されます。自動入力用のアドレスを入れると、日報の内容が入った状態でフォームが開きます。</span></div></div>'
     + '<div class="card"><div class="field"><label for="s-in">入室の文面</label><textarea id="s-in">' + esc(d.inTpl) + '</textarea></div>'
     + '<div class="field"><label for="s-out">退出の文面</label><textarea id="s-out">' + esc(d.outTpl) + '</textarea></div>'
     + '<p class="hint small muted">使える差し込み：{家庭}　{時刻}　{日付}　{担当}</p>'
@@ -796,7 +812,7 @@ app.addEventListener("click", e => {
       const d = V.draft;
       const url = d.reportUrl.trim();
       if (url && !/^https:\/\//.test(url)) { toast("日報フォームのアドレスは https:// から始まるものを入れてください"); break; }
-      S.settings = { staff: d.staff.trim(), inTpl: d.inTpl.trim() || DEFAULT_SETTINGS.inTpl, outTpl: d.outTpl.trim() || DEFAULT_SETTINGS.outTpl, fullName: d.fullName.trim(), reportUrl: url };
+      S.settings = { staff: d.staff.trim(), inTpl: d.inTpl.trim() || DEFAULT_SETTINGS.inTpl, outTpl: d.outTpl.trim() || DEFAULT_SETTINGS.outTpl, fullName: d.fullName.trim(), email: (d.email || "").trim(), reportUrl: url };
       write("settings/main", S.settings); toast("保存しました"); go({ name: "list" });
       break;
     }
@@ -814,6 +830,11 @@ app.addEventListener("click", e => {
       break;
     }
     case "report": go({ name: "report", day: el.dataset.day }); break;
+    case "openForm": {
+      // リンクの遷移はそのまま進め、開く直前に最新の入力内容を入れる
+      if (hasPrefill(S.settings.reportUrl)) el.href = prefillUrl(S.settings.reportUrl, V.day);
+      break;
+    }
     case "copyField": {
       const f = document.getElementById(el.dataset.field);
       if (!f || !f.value.trim()) { toast("コピーする内容がありません"); break; }
@@ -858,6 +879,7 @@ app.addEventListener("input", e => {
   } else if (V.name === "settings") {
     if (t.id === "s-staff") V.draft.staff = t.value;
     if (t.id === "s-fullname") V.draft.fullName = t.value;
+    if (t.id === "s-email") V.draft.email = t.value;
     if (t.id === "s-report") V.draft.reportUrl = t.value;
     if (t.id === "s-in") V.draft.inTpl = t.value;
     if (t.id === "s-out") V.draft.outTpl = t.value;
