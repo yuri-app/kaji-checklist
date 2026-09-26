@@ -97,6 +97,7 @@ a{color:var(--accent)}
 .home.active{border-color:var(--ok);border-width:2px}
 .pill{display:inline-flex;align-items:center;gap:6px;font-size:.78rem;font-weight:700;padding:2px 10px;border-radius:999px;background:var(--surface2);color:var(--muted);border:1px solid var(--line);white-space:nowrap}
 .pill.on{background:var(--ok-soft);color:var(--ok);border-color:transparent}
+.flow-label{margin:4px 0 -4px;font-size:.78rem;font-weight:700;letter-spacing:.08em;color:var(--muted)}
 .pill.warn{background:var(--warn-soft);color:var(--warn);border-color:transparent}
 .home.due{border-color:var(--warn);border-width:2px}
 .rhead{display:flex;align-items:center;justify-content:space-between;gap:10px}
@@ -407,7 +408,6 @@ function viewList(){
   const active = homes.filter(h => S.visits[h.id]);
   let out = '<header class="top"><div><p class="eyebrow num">' + esc(fmtDate(now)) + '</p><h1>家事代行チェックリスト</h1></div>'
     + '<button class="btn sm ghost" data-act="settings">設定</button></header>';
-  if (S.mode === "local" && homes.length) out += '<p class="notice">データはこのスマホの中に保存されます。機種変更やブラウザのデータ削除の前に、「設定」から書き出してください。</p>';
 
   const overdue = pastUnsent();
   if (overdue.length) out += '<button class="notice" data-act="report" data-day="' + overdue[0] + '" style="border:0;text-align:left">' + esc(fmtDay(overdue[0])) + ' の業務日報が未送信です。押すと開きます。</button>';
@@ -427,8 +427,8 @@ function viewList(){
         + '<span class="meta num">作業 ' + (h.tasks || []).length + '項目・最終確認 ' + (h.finals || []).length + '項目　' + pill + '</span></button>';
     }).join("") + '</div>';
   }
+  if (homes.length) out += viewReportRows();
   out += '<button class="btn" data-act="new">＋ 家庭を追加</button></section>';
-  out += viewReportRows();
 
   if (S.log.length) {
     out += '<section class="section"><h2>最近の記録</h2><div class="log">' + S.log.slice(0, 10).map(e =>
@@ -470,8 +470,8 @@ function viewReportRows(){
       + '<span class="name">' + label + '</span><span class="chev" aria-hidden="true">›</span>'
       + '<span class="meta num">' + esc(fmtDay(key)) + (n ? '・訪問 ' + n + '件' : '') + '　' + pill + '</span></button>';
   };
-  return '<section class="section"><h2>業務日報</h2><div class="homes">'
-    + row(today, "今日の日報") + past.map(k => row(k, "未送信の日報")).join("") + '</div></section>';
+  return '<p class="flow-label">最後に</p><div class="homes">'
+    + row(today, "業務日報（今日）") + past.map(k => row(k, "業務日報（未送信）")).join("") + '</div>';
 }
 function viewReport(){
   const key = S.view.day, r = S.reports[key] || {}, a = autoReport(key), st = S.settings;
@@ -600,7 +600,9 @@ function viewDone(){
     + '<p class="small muted">LINEで送信できていなければ、「LINEをもう一度開く」から送ってください。</p>' + LINE_HOWTO
     + '<div class="btnrow"><a class="btn sm" href="' + esc(lineUrl(txt)) + '" target="_blank" rel="noopener">LINEをもう一度開く</a>'
     + '<button class="btn sm" data-act="copy" data-text="' + esc(txt) + '">文面をコピー</button></div></div>'
-    + '<button class="btn big primary" data-act="back">一覧へ戻る</button>';
+    + '<div class="card"><p class="flow-label">次は</p><h2>業務日報</h2><p class="small muted">その日の最後の訪問が終わったら、業務日報を送って仕事の完了です。</p>'
+    + '<button class="btn big primary" data-act="report" data-day="' + dayKey(e.outAt) + '">業務日報へ進む</button></div>'
+    + '<button class="btn" data-act="back">一覧へ戻る</button>';
 }
 
 /* --- edit --- */
