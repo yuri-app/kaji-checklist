@@ -107,6 +107,8 @@ button.log-row{width:100%;background:none;border:0;border-top:1px solid var(--li
 button.log-row:first-child{border-top:0}
 .home .sched{margin-left:10px;font-family:var(--f-body);font-size:.88rem;font-weight:500;color:var(--muted);white-space:nowrap}
 .weekpick{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.weekpick.six{grid-template-columns:repeat(6,1fr)}
+.home .note{color:var(--warn)}
 .wk{min-height:42px;border-radius:10px;border:1px solid var(--line);background:var(--surface);font-weight:700;color:var(--muted);padding:0}
 .wk[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .pill.warn{background:var(--warn-soft);color:var(--warn);border-color:transparent}
@@ -227,6 +229,7 @@ const SAMPLE_HOME = {
   start: "10:00",
   end: "12:00",
   days: ["火", "金"],
+  weeks: "every",
   memo: "これは見本です。自分の訪問先を登録したら、「編集」→「この家庭を削除」で消してください。\n鍵：ポスト内のキーボックス／猫がいるので玄関の開け閉めに注意",
   tasks: [
     "玄関の掃き掃除・靴をそろえる",
@@ -269,8 +272,13 @@ function timeForm(id, value, okAct, okLabel, uiKey){
     + '<button class="btn sm" data-act="ui" data-key="' + uiKey + '">やめる</button></div>';
 }
 const WEEK = ["月", "火", "水", "木", "金", "土", "日"]; // 表示順（月曜はじまり）
+// 週の決まり：weeks は "every"（毎週）か、第n週の番号の配列（例 [1, 3]）
+function weekText(weeks){
+  if (weeks === "every") return "毎週";
+  return Array.isArray(weeks) && weeks.length ? "第" + weeks.slice().sort().join("・") : "";
+}
 function scheduleText(h){
-  const days = WEEK.filter(w => (h.days || []).includes(w)).join("・");
+  const days = [weekText(h.weeks), WEEK.filter(w => (h.days || []).includes(w)).join("・")].filter(Boolean).join(" ");
   const time = h.start ? hm(h.start) + "〜" + (h.end ? hm(h.end) : "") : "";
   return [days, time].filter(Boolean).join(" ");
 }
@@ -460,6 +468,7 @@ function viewList(){
         : '<span class="pill">未入室</span>';
       return '<button class="home' + (vis ? " active" : "") + '" data-act="open" data-id="' + esc(h.id) + '">'
         + '<span class="name">' + esc(h.name) + (scheduleText(h) ? '<span class="sched num">' + esc(scheduleText(h)) + '</span>' : '') + '</span><span class="chev" aria-hidden="true">›</span>'
+        + (h.schedNote ? '<span class="meta note">※ ' + esc(h.schedNote) + '</span>' : '')
         + '<span class="meta num">作業 ' + (h.tasks || []).length + '項目・最終確認 ' + (h.finals || []).length + '項目　' + pill + '</span></button>';
     }).join("") + '</div>';
   }
@@ -655,9 +664,17 @@ function viewEdit(){
   let out = '<div class="bar"><div class="bar-top"><button class="navbtn" data-act="editCancel">キャンセル</button><span class="t">' + (isNew ? "家庭を追加" : "家庭を編集") + '</span>'
     + '<button class="navbtn" data-act="editSave">保存</button></div></div>';
   out += '<div class="card"><div class="field"><label for="f-name">家庭の名前</label><input type="text" id="f-name" value="' + esc(d.name) + '" placeholder="例：佐藤様"></div>'
+    + '<div class="field"><span class="lbl">週</span><div class="weekpick six">'
+    + ["every", 1, 2, 3, 4, 5].map(k => {
+        const on = k === "every" ? d.weeks === "every" : Array.isArray(d.weeks) && d.weeks.includes(k);
+        return '<button type="button" class="wk" data-act="wkn" data-k="' + k + '" aria-pressed="' + (on ? "true" : "false") + '">' + (k === "every" ? "毎週" : "第" + k) + '</button>';
+      }).join("")
+    + '</div><span class="hint">第1〜第5は複数選べます（第1と第3で「第1・3」）。</span></div>'
     + '<div class="field"><span class="lbl">訪問曜日</span><div class="weekpick">'
     + WEEK.map(w => '<button type="button" class="wk" data-act="wk" data-w="' + w + '" aria-pressed="' + ((d.days || []).includes(w) ? "true" : "false") + '">' + w + '</button>').join("")
     + '</div><span class="hint">複数選べます。一覧で名前の後ろに表示されます。</span></div>'
+    + '<div class="field"><label for="f-schednote">予定の補足</label><input type="text" id="f-schednote" value="' + esc(d.schedNote || "") + '" placeholder="例：隔週／10/3は土曜に振替">'
+    + '<span class="hint">曜日ごとに週が違う・隔週・振替などは、ここに書きます。一覧の名前の下に出ます。</span></div>'
     + '<div class="field"><span class="lbl">予定時刻</span><div class="time2"><input type="time" id="f-start" value="' + esc(d.start) + '" aria-label="開始"><span class="muted">〜</span><input type="time" id="f-end" value="' + esc(d.end) + '" aria-label="終了"></div>'
     + '<span class="hint">一覧で名前の後ろに表示されます。</span></div>'
     + '<div class="field"><label for="f-memo">メモ・注意事項</label><textarea id="f-memo" placeholder="例：鍵の受け取り方法、ペット、触ってはいけない物など">' + esc(d.memo) + '</textarea>'
@@ -697,7 +714,7 @@ function saveEdit(){
   if (!d.name) { toast("家庭の名前を入力してください"); const n = document.getElementById("f-name"); if (n) n.focus(); return; }
   const clean = arr => arr.map(t => ({ id: t.id, text: t.text.trim() })).filter(t => t.text);
   const id = d.id || uid();
-  const rec = { name: d.name, memo: d.memo.trim(), start: d.start || "", end: d.end || "", days: WEEK.filter(w => (d.days || []).includes(w)), tasks: clean(d.tasks), finals: clean(d.finals), sort: d.sort };
+  const rec = { name: d.name, memo: d.memo.trim(), start: d.start || "", end: d.end || "", days: WEEK.filter(w => (d.days || []).includes(w)), weeks: d.weeks === "every" ? "every" : (Array.isArray(d.weeks) ? d.weeks.slice().sort() : []), schedNote: (d.schedNote || "").trim(), tasks: clean(d.tasks), finals: clean(d.finals), sort: d.sort };
   if (S.view.isNew) rec.sort = Math.max(0, ...Object.values(S.homes).map(h => h.sort || 0)) + 1;
   S.homes[id] = Object.assign({ id }, rec);
   write("homes/" + id, rec);
@@ -794,10 +811,10 @@ app.addEventListener("click", e => {
     case "open": go({ name: "visit", id: el.dataset.id }); break;
     case "back": go({ name: "list" }); break;
     case "settings": go({ name: "settings", draft: clone(S.settings) }); break;
-    case "new": go({ name: "edit", isNew: true, back: "list", draft: { name: "", memo: "", start: "", end: "", days: [], tasks: [], finals: DEFAULT_FINALS.map(t => ({ id: uid(), text: t })) } }); break;
+    case "new": go({ name: "edit", isNew: true, back: "list", draft: { name: "", memo: "", start: "", end: "", days: [], weeks: [], schedNote: "", tasks: [], finals: DEFAULT_FINALS.map(t => ({ id: uid(), text: t })) } }); break;
     case "edit": {
       const h = S.homes[el.dataset.id];
-      go({ name: "edit", isNew: false, back: "visit", draft: { id: h.id, name: h.name || "", memo: h.memo || "", start: h.start || "", end: h.end || "", days: clone(h.days || []), sort: h.sort || 0, tasks: clone(h.tasks || []), finals: clone(h.finals || []) } });
+      go({ name: "edit", isNew: false, back: "visit", draft: { id: h.id, name: h.name || "", memo: h.memo || "", start: h.start || "", end: h.end || "", days: clone(h.days || []), weeks: h.weeks === "every" ? "every" : clone(h.weeks || []), schedNote: h.schedNote || "", sort: h.sort || 0, tasks: clone(h.tasks || []), finals: clone(h.finals || []) } });
       break;
     }
     case "ui": {
@@ -865,6 +882,20 @@ app.addEventListener("click", e => {
     case "final": toggle(V.id, "final", el.dataset.item); break;
     case "copy": copyText(el.dataset.text); break;
     case "add": addItem(el.dataset.list); break;
+    case "wkn": {
+      const k = el.dataset.k;
+      if (k === "every") V.draft.weeks = V.draft.weeks === "every" ? [] : "every";
+      else {
+        const n = Number(k), ws = Array.isArray(V.draft.weeks) ? V.draft.weeks : [], i = ws.indexOf(n);
+        if (i >= 0) ws.splice(i, 1); else ws.push(n);
+        V.draft.weeks = ws;
+      }
+      el.parentNode.querySelectorAll('[data-act="wkn"]').forEach(b => {
+        const kk = b.dataset.k;
+        b.setAttribute("aria-pressed", String(kk === "every" ? V.draft.weeks === "every" : Array.isArray(V.draft.weeks) && V.draft.weeks.includes(Number(kk))));
+      });
+      break;
+    }
     case "wk": {
       const days = V.draft.days = V.draft.days || [], w = el.dataset.w, i = days.indexOf(w);
       if (i >= 0) days.splice(i, 1); else days.push(w);
@@ -899,7 +930,7 @@ app.addEventListener("click", e => {
     case "sample": {
       const id = uid();
       const rec = {
-        name: SAMPLE_HOME.name, memo: SAMPLE_HOME.memo, start: SAMPLE_HOME.start, end: SAMPLE_HOME.end, days: SAMPLE_HOME.days.slice(),
+        name: SAMPLE_HOME.name, memo: SAMPLE_HOME.memo, start: SAMPLE_HOME.start, end: SAMPLE_HOME.end, days: SAMPLE_HOME.days.slice(), weeks: SAMPLE_HOME.weeks,
         sort: Math.max(0, ...Object.values(S.homes).map(h => h.sort || 0)) + 1,
         tasks: SAMPLE_HOME.tasks.map(t => ({ id: uid(), text: t })),
         finals: DEFAULT_FINALS.map(t => ({ id: uid(), text: t }))
@@ -945,6 +976,7 @@ app.addEventListener("input", e => {
     if (t.id === "f-name") V.draft.name = t.value;
     else if (t.id === "f-memo") V.draft.memo = t.value;
     else if (t.id === "f-start") V.draft.start = t.value;
+    else if (t.id === "f-schednote") V.draft.schedNote = t.value;
     else if (t.id === "f-end") V.draft.end = t.value;
     else if (t.dataset.list) { const it = V.draft[t.dataset.list].find(x => x.id === t.dataset.item); if (it) it.text = t.value; }
   } else if (V.name === "settings") {
