@@ -119,6 +119,8 @@ button.log-row:first-child{border-top:0}
 .vrow .sub{font-size:.86rem;color:var(--muted)}
 .st-ok{color:var(--ok);font-weight:700}
 .st-ng{color:var(--warn);font-weight:700}
+.trash-row{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center}
+.trash-row .btn{grid-row:1 / span 2;grid-column:2}
 .pill.warn{background:var(--warn-soft);color:var(--warn);border-color:transparent}
 .home.due{border-color:var(--warn);border-width:2px}
 .rhead{display:flex;align-items:center;justify-content:space-between;gap:10px}
@@ -257,10 +259,12 @@ const SAMPLE_HOME = {
 const EXPORT_APP = "kaji-checklist";
 const LOCAL_KEY = "kaji-checklist-v1";
 const LOG_MAX = 60;
+const TRASH_DAYS = 30;     // 削除した家庭を残す日数
+const BACKUP_DAYS = 7;     // バックアップの案内を出すまでの日数
 
 const S = {
   mode: "loading",          // loading | db | local
-  homes: {}, visits: {}, settings: Object.assign({}, DEFAULT_SETTINGS), log: [], reports: {},
+  homes: {}, visits: {}, settings: Object.assign({}, DEFAULT_SETTINGS), log: [], reports: {}, trash: {},
   view: { name: "list" },
   ui: {},
   got: {}
@@ -397,14 +401,21 @@ async function flush(path){
   q.running = false;
 }
 function saveLocal(){
-  try { localStorage.setItem(LOCAL_KEY, JSON.stringify({ homes: S.homes, visits: S.visits, settings: S.settings, log: S.log, reports: S.reports })); } catch (e) {}
+  try { localStorage.setItem(LOCAL_KEY, JSON.stringify({ homes: S.homes, visits: S.visits, settings: S.settings, log: S.log, reports: S.reports, trash: S.trash })); } catch (e) {}
 }
 function loadLocal(){
   try {
     const d = JSON.parse(localStorage.getItem(LOCAL_KEY) || "null");
-    if (d) { S.homes = d.homes || {}; S.visits = d.visits || {}; S.settings = Object.assign({}, DEFAULT_SETTINGS, d.settings || {}); S.log = d.log || []; S.reports = d.reports || {}; }
+    if (d) { S.homes = d.homes || {}; S.visits = d.visits || {}; S.settings = Object.assign({}, DEFAULT_SETTINGS, d.settings || {}); S.log = d.log || []; S.reports = d.reports || {}; S.trash = d.trash || {}; }
+    purgeTrash();
   } catch (e) {}
 }
+// 30日を過ぎた「削除した家庭」を消す
+function purgeTrash(){
+  const limit = Date.now() - TRASH_DAYS * 864e5;
+  Object.keys(S.trash).forEach(id => { if (new Date(S.trash[id].deletedAt).getTime() < limit) delete S.trash[id]; });
+}
+function trashLeftDays(t){ return Math.max(0, TRASH_DAYS - Math.floor((Date.now() - new Date(t.deletedAt).getTime()) / 864e5)); }
 function startLocal(){ S.mode = "local"; loadLocal(); render(); }
 
 function startDb(){
@@ -488,6 +499,11 @@ function viewList(){
   homes.filter(h => S.visits[h.id] && h.end && Date.now() > new Date(atTime(S.visits[h.id].inAt, h.end)).getTime()).forEach(h => {
     out += '<button class="notice" data-act="open" data-id="' + esc(h.id) + '" style="border:0;text-align:left">' + esc(h.name) + '：予定の終了時刻（' + esc(hm(h.end)) + '）を過ぎています。退出連絡は済みましたか？</button>';
   });
+  const last = S.settings.lastExport;
+  if (S.mode === "local" && homes.length && (!last || Date.now() - new Date(last).getTime() > BACKUP_DAYS * 864e5))
+    out += '<button class="notice" data-act="settings" style="border:0;text-align:left">'
+      + (last ? '前回のバックアップから' + Math.floor((Date.now() - new Date(last).getTime()) / 864e5) + '日たちました。' : 'まだバックアップを書き出していません。')
+      + '「設定」の下の「書き出す」で保存しておきましょう。</button>';
   const overdue = pastUnsent();
   if (overdue.length) out += '<button class="notice" data-act="report" data-day="' + overdue[0] + '" style="border:0;text-align:left">' + esc(fmtDay(overdue[0])) + ' の業務日報が未送信です。押すと開きます。</button>';
 
@@ -761,7 +777,7 @@ function viewEdit(){
   out += '<button class="btn big primary" data-act="editSave">保存する</button>';
   if (!isNew) {
     out += S.ui.confirmDelete
-      ? '<div class="alert danger"><p>「' + esc(d.name) + '」と作業リストを削除します。元に戻せません。</p><div class="btnrow"><button class="btn sm danger" data-act="homeDelete">削除する</button><button class="btn sm" data-act="ui" data-key="confirmDelete" data-keep="1">やめる</button></div></div>'
+      ? '<div class="alert danger"><p>「' + esc(d.name) + '」を削除します。30日間は「設定」の「削除した家庭」から戻せます。</p><div class="btnrow"><button class="btn sm danger" data-act="homeDelete">削除する</button><button class="btn sm" data-act="ui" data-key="confirmDelete" data-keep="1">やめる</button></div></div>'
       : '<button class="btn danger" data-act="ui" data-key="confirmDelete" data-on="1" data-keep="1">この家庭を削除</button>';
   }
   return out;
@@ -821,24 +837,45 @@ function viewSettings(){
 }
 function viewBackup(){
   const p = S.view.pendingImport;
+  const last = S.settings.lastExport;
   let out = '<div class="card"><h2>データの書き出し・読み込み</h2>'
-    + '<p class="small muted">登録した家庭・設定・最近の記録を1つのファイルに保存します。機種変更のときは、新しいスマホでこのファイルを読み込んでください。</p>'
+    + '<p class="small muted">登録した家庭・設定・記録を1つのファイルに保存します。機種変更のときや、パソコンで入力した家庭をスマホに取り込むときに使います。</p>'
+    + '<p class="small muted num">前回の書き出し：' + (last ? esc(fmtDate(last)) + ' ' + esc(fmtTime(last)) : 'まだありません') + '</p>'
     + '<div class="btnrow"><button class="btn sm" data-act="export">書き出す</button><label class="btn sm" for="s-import">読み込む</label></div>'
     + '<input type="file" id="s-import" accept=".json,application/json" hidden>';
   if (p) {
-    out += '<div class="alert warn"><p class="num">「' + esc(p.fileName) + '」を読み込むと、今の家庭 ' + Object.keys(S.homes).length + ' 件と記録が、ファイルの内容（家庭 ' + Object.keys(p.data.homes).length + ' 件）に置き換わります。</p>'
-      + '<div class="btnrow"><button class="btn sm warn" data-act="importApply">置き換える</button><button class="btn sm" data-act="importCancel">やめる</button></div></div>';
+    const ids = Object.keys(p.data.homes);
+    const add = ids.filter(id => !S.homes[id]).map(id => p.data.homes[id].name);
+    const upd = ids.filter(id => S.homes[id]).map(id => p.data.homes[id].name);
+    out += '<div class="alert warn"><p><b>「' + esc(p.fileName) + '」の読み込み方を選んでください。</b></p>'
+      + '<p><b>家庭だけ追加する</b>：今の家庭・記録・日報・設定はそのままで、ファイルの家庭を足します。<br>'
+      + '追加：' + esc(add.join("、") || "なし") + '<br>上書き：' + esc(upd.join("、") || "なし") + '</p>'
+      + '<button class="btn sm warn" data-act="importMerge">家庭だけ追加する</button>'
+      + '<p class="num"><b>すべて置き換える</b>：今の家庭 ' + Object.keys(S.homes).length + ' 件と記録・日報・設定が、ファイルの内容（家庭 ' + ids.length + ' 件）に置き換わります。機種変更のときに使います。</p>'
+      + '<div class="btnrow"><button class="btn sm danger" data-act="importApply">すべて置き換える</button><button class="btn sm" data-act="importCancel">やめる</button></div></div>';
   }
+  out += '</div>';
+
+  const trash = Object.keys(S.trash).map(id => Object.assign({ id }, S.trash[id])).sort((a, b) => new Date(b.deletedAt) - new Date(a.deletedAt));
+  out += '<div class="card" id="trash"><h2>削除した家庭</h2>';
+  out += trash.length
+    ? '<p class="small muted">削除してから30日間はここに残り、元に戻せます。</p><div class="vlist">'
+      + trash.map(t => '<div class="vrow trash-row"><span class="vname">' + esc(t.name) + '</span>'
+        + '<span class="sub num">' + esc(fmtDate(t.deletedAt)) + 'に削除・あと' + trashLeftDays(t) + '日で消えます</span>'
+        + '<button class="btn sm" data-act="restore" data-id="' + esc(t.id) + '">元に戻す</button></div>').join("") + '</div>'
+    : '<p class="small muted">削除した家庭はありません。</p>';
   return out + '</div>';
 }
 function exportData(){
-  const data = { app: EXPORT_APP, version: 1, exportedAt: new Date().toISOString(), homes: S.homes, visits: S.visits, settings: S.settings, log: S.log, reports: S.reports };
+  const data = { app: EXPORT_APP, version: 1, exportedAt: new Date().toISOString(), homes: S.homes, visits: S.visits, settings: S.settings, log: S.log, reports: S.reports, trash: S.trash };
   const d = new Date();
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
   a.download = "家事代行チェックリスト_" + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + ".json";
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  S.settings.lastExport = new Date().toISOString();
+  write("settings/main", S.settings);
   toast("書き出しました");
 }
 function readImport(file){
@@ -855,13 +892,28 @@ function readImport(file){
   r.onerror = () => toast("ファイルを読み込めませんでした");
   r.readAsText(file);
 }
+// 家庭だけ追加（同じ家庭は上書き）。記録・日報・設定は今のまま
+function mergeImport(){
+  const homes = S.view.pendingImport.data.homes || {};
+  let maxSort = Math.max(0, ...Object.values(S.homes).map(h => h.sort || 0));
+  Object.keys(homes).forEach(id => {
+    const h = Object.assign({}, homes[id]); delete h.id;
+    if (!S.homes[id]) h.sort = ++maxSort;
+    S.homes[id] = Object.assign({ id }, h);
+    delete S.trash[id];
+    write("homes/" + id, h);
+  });
+  toast("家庭を取り込みました");
+  go({ name: "list" });
+}
 function applyImport(){
   const data = S.view.pendingImport.data;
   const next = {
     homes: data.homes || {}, visits: data.visits || {},
     settings: Object.assign({}, DEFAULT_SETTINGS, data.settings || {}),
     log: Array.isArray(data.log) ? data.log.slice(0, LOG_MAX) : [],
-    reports: data.reports && typeof data.reports === "object" ? data.reports : {}
+    reports: data.reports && typeof data.reports === "object" ? data.reports : {},
+    trash: data.trash && typeof data.trash === "object" ? data.trash : {}
   };
   if (S.mode === "db") {
     Object.keys(S.homes).forEach(id => { if (!next.homes[id]) write("homes/" + id, null); });
@@ -999,16 +1051,17 @@ app.addEventListener("click", e => {
     case "editSave": saveEdit(); break;
     case "homeDelete": {
       const id = V.draft.id;
+      if (S.homes[id]) { S.trash[id] = Object.assign({}, S.homes[id], { deletedAt: new Date().toISOString() }); write("trash/" + id, S.trash[id]); }
       delete S.homes[id]; delete S.visits[id];
       write("homes/" + id, null); write("visits/" + id, null);
-      toast("削除しました"); go({ name: "list" });
+      toast("削除しました。30日間は「設定」の「削除した家庭」から戻せます"); go({ name: "list" });
       break;
     }
     case "settingsSave": {
       const d = V.draft;
       const url = d.reportUrl.trim();
       if (url && !/^https:\/\//.test(url)) { toast("日報フォームのアドレスは https:// から始まるものを入れてください"); break; }
-      S.settings = { staff: d.staff.trim(), inTpl: d.inTpl.trim() || DEFAULT_SETTINGS.inTpl, outTpl: d.outTpl.trim() || DEFAULT_SETTINGS.outTpl, fullName: d.fullName.trim(), email: (d.email || "").trim(), reportUrl: url };
+      S.settings = { lastExport: S.settings.lastExport || null, staff: d.staff.trim(), inTpl: d.inTpl.trim() || DEFAULT_SETTINGS.inTpl, outTpl: d.outTpl.trim() || DEFAULT_SETTINGS.outTpl, fullName: d.fullName.trim(), email: (d.email || "").trim(), reportUrl: url };
       write("settings/main", S.settings); toast("保存しました"); go({ name: "list" });
       break;
     }
@@ -1052,6 +1105,16 @@ app.addEventListener("click", e => {
     }
     case "export": exportData(); break;
     case "importApply": applyImport(); break;
+    case "importMerge": mergeImport(); break;
+    case "restore": {
+      const t = S.trash[el.dataset.id]; if (!t) break;
+      const h = Object.assign({}, t); delete h.deletedAt; delete h.id;
+      S.homes[el.dataset.id] = Object.assign({ id: el.dataset.id }, h);
+      delete S.trash[el.dataset.id];
+      write("homes/" + el.dataset.id, h); write("trash/" + el.dataset.id, null);
+      toast("「" + t.name + "」を元に戻しました"); render();
+      break;
+    }
     case "importCancel": delete V.pendingImport; render(); break;
     case "settingsReset": {
       V.draft.inTpl = DEFAULT_SETTINGS.inTpl; V.draft.outTpl = DEFAULT_SETTINGS.outTpl;
