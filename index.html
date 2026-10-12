@@ -190,8 +190,12 @@ button.notice{font:inherit;font-size:.88rem;width:100%;cursor:pointer}
 input[type=text],textarea{width:100%;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-height:46px}
 textarea{min-height:88px;resize:vertical}
 .editor{display:flex;flex-direction:column;gap:8px}
-.ed-row{display:grid;grid-template-columns:1fr repeat(3,40px);gap:6px;align-items:center}
-.ed-row button{height:40px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--muted);font-size:1rem;padding:0}
+.ed-row{display:flex;flex-direction:column;gap:6px;padding-bottom:10px;border-bottom:1px dashed var(--line)}
+.ed-row:last-child{border-bottom:0;padding-bottom:0}
+.ed-text{min-height:46px;resize:none;overflow:hidden;line-height:1.5}
+.ed-btns{display:flex;justify-content:flex-end;gap:6px}
+.ed-btns button{width:44px;}
+.ed-row button{height:36px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--muted);font-size:1rem;padding:0}
 .ed-row button[data-act="rm"]{color:var(--danger)}
 .ed-row button:disabled{opacity:.35}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:14px}
@@ -767,12 +771,15 @@ function renderEditor(list){
   const items = S.view.draft[list];
   const ph = list === "tasks" ? "例：浴室（浴槽・床・排水口）" : "例：窓の戸締まり";
   el.innerHTML = items.length ? items.map((t, i) =>
-    '<div class="ed-row"><input type="text" id="it-' + esc(t.id) + '" data-list="' + list + '" data-item="' + esc(t.id) + '" value="' + esc(t.text) + '" placeholder="' + ph + '" enterkeyhint="next" aria-label="' + (i+1) + '番目">'
-    + '<button data-act="up" data-list="' + list + '" data-item="' + esc(t.id) + '" aria-label="上へ"' + (i === 0 ? " disabled" : "") + '>↑</button>'
+    '<div class="ed-row"><textarea class="ed-text" rows="1" id="it-' + esc(t.id) + '" data-list="' + list + '" data-item="' + esc(t.id) + '" placeholder="' + ph + '" enterkeyhint="next" aria-label="' + (i+1) + '番目">' + esc(t.text) + '</textarea>'
+    + '<div class="ed-btns"><button data-act="up" data-list="' + list + '" data-item="' + esc(t.id) + '" aria-label="上へ"' + (i === 0 ? " disabled" : "") + '>↑</button>'
     + '<button data-act="down" data-list="' + list + '" data-item="' + esc(t.id) + '" aria-label="下へ"' + (i === items.length - 1 ? " disabled" : "") + '>↓</button>'
-    + '<button data-act="rm" data-list="' + list + '" data-item="' + esc(t.id) + '" aria-label="削除">×</button></div>'
+    + '<button data-act="rm" data-list="' + list + '" data-item="' + esc(t.id) + '" aria-label="削除">×</button></div></div>'
   ).join("") : '<p class="small muted">項目がありません。</p>';
+  el.querySelectorAll(".ed-text").forEach(fitHeight);
 }
+// 文章の長さに合わせて入力欄の高さを伸ばす
+function fitHeight(ta){ ta.style.height = "auto"; ta.style.height = ta.scrollHeight + 2 + "px"; }
 function addItem(list, afterId){
   const items = S.view.draft[list], item = { id: uid(), text: "" };
   const at = afterId ? items.findIndex(t => t.id === afterId) + 1 : items.length;
@@ -1056,6 +1063,7 @@ app.addEventListener("click", e => {
 });
 app.addEventListener("input", e => {
   const t = e.target, V = S.view;
+  if (t.classList && t.classList.contains("ed-text")) fitHeight(t);
   if (V.name === "edit") {
     if (t.id === "f-name") V.draft.name = t.value;
     else if (t.id === "f-memo") V.draft.memo = t.value;
